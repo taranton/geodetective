@@ -1,0 +1,5 @@
+{
+  "name": "GeoDetective AI",
+  "description": "An advanced OSINT tool that uses computer vision and Google Search grounding to estimate the geolocation of photographs based on architectural features, signs, weather, and more.",
+  "requestFramePermissions": []
+}
