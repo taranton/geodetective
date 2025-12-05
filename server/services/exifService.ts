@@ -26,21 +26,22 @@ export async function extractExifData(base64Data: string, mimeType: string): Pro
     // Convert base64 to Buffer
     const buffer = Buffer.from(base64Data, 'base64');
 
-    // Parse EXIF data
+    console.log(`[EXIF] Processing image: ${mimeType}, size: ${buffer.length} bytes`);
+
+    // Parse EXIF data - enable HEIC support
     const exif = await exifr.parse(buffer, {
       gps: true,
       tiff: true,
       exif: true,
-      // Pick specific tags we care about
-      pick: [
-        'latitude', 'longitude', 'GPSAltitude',
-        'DateTimeOriginal', 'CreateDate',
-        'Make', 'Model', 'Software',
-        'ImageWidth', 'ImageHeight'
-      ]
+      icc: false,
+      iptc: false,
+      xmp: false,
+      // Don't pick - get all GPS-related tags
+      // HEIC files store GPS differently sometimes
     });
 
     if (!exif) {
+      console.log('[EXIF] No EXIF metadata found');
       return {
         hasGps: false,
         gps: null,
@@ -49,17 +50,23 @@ export async function extractExifData(base64Data: string, mimeType: string): Pro
       };
     }
 
-    // Check for GPS data
-    const hasGps = exif.latitude !== undefined && exif.longitude !== undefined;
+    console.log('[EXIF] Metadata found:', Object.keys(exif));
+
+    // Check for GPS data - HEIC might use different property names
+    const lat = exif.latitude ?? exif.GPSLatitude;
+    const lng = exif.longitude ?? exif.GPSLongitude;
+    const hasGps = lat !== undefined && lng !== undefined;
+
+    console.log(`[EXIF] GPS check: lat=${lat}, lng=${lng}, hasGps=${hasGps}`);
 
     if (hasGps) {
       return {
         hasGps: true,
         gps: {
-          latitude: exif.latitude,
-          longitude: exif.longitude,
-          altitude: exif.GPSAltitude,
-          timestamp: exif.DateTimeOriginal || exif.CreateDate,
+          latitude: lat,
+          longitude: lng,
+          altitude: exif.GPSAltitude ?? exif.altitude,
+          timestamp: exif.DateTimeOriginal || exif.CreateDate || exif.ModifyDate,
           make: exif.Make,
           model: exif.Model,
           software: exif.Software
