@@ -20,6 +20,7 @@ export interface LocationHints {
   continent?: string;
   country?: string;
   city?: string;
+  exifGps?: string; // GPS coordinates extracted from EXIF metadata
 }
 
 export interface GeoAnalysisResult {
@@ -119,6 +120,11 @@ export const analyzeImageLocation = async (
 ): Promise<GeoAnalysisResult> => {
   try {
     let promptText = "Locate these images. They depict the same location or very close locations. Identify all visual cues across all images, search for them, and determine the coordinates. IMPORTANT: Return ONLY valid JSON.";
+
+    // Add EXIF GPS data if available (high priority hint!)
+    if (hints?.exifGps) {
+      promptText += `\n\n**IMPORTANT - EXIF METADATA FOUND**:\n${hints.exifGps}\nThis GPS data was extracted from the image metadata. Use these coordinates as the primary location and verify they match the visual content. The confidence should be HIGH if visuals are consistent.`;
+    }
 
     if (hints && (hints.continent || hints.country || hints.city)) {
       promptText += "\n\nAdditional Context provided by user (use as hints, but verify visually):";

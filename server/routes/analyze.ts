@@ -4,6 +4,12 @@ import { DbUser, DbSystemSetting } from '../db/models.js';
 import { createError } from '../middleware/errorHandler.js';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
 import { analyzeImageLocation, refineImageLocation } from '../services/geminiService.js';
+import {
+  extractExifFromMultiple,
+  validateGpsCoordinates,
+  formatGpsForPrompt,
+  ExifResult
+} from '../services/exifService.js';
 
 const router = Router();
 
@@ -20,6 +26,23 @@ router.post('/', async (req: AuthRequest, res, next) => {
 
     if (images.length > 4) {
       throw createError('Maximum 4 images allowed', 400, 'TOO_MANY_IMAGES');
+    }
+
+    // === STEP 1: Extract EXIF data ===
+    let exifData: { index: number; result: ExifResult } | null = null;
+    let exifHint: string | null = null;
+
+    try {
+      exifData = await extractExifFromMultiple(images);
+      if (exifData?.result.hasGps && exifData.result.gps) {
+        const { latitude, longitude } = exifData.result.gps;
+        if (validateGpsCoordinates(latitude, longitude)) {
+          exifHint = formatGpsForPrompt(exifData.result.gps);
+          console.log('EXIF GPS found:', exifHint);
+        }
+      }
+    } catch (exifError) {
+      console.error('EXIF extraction failed (non-critical):', exifError);
     }
 
     // Get search cost
@@ -53,8 +76,22 @@ router.post('/', async (req: AuthRequest, res, next) => {
       [searchCost, req.userId]
     );
 
-    // Perform analysis
-    const result = await analyzeImageLocation(images, hints);
+    // === STEP 2: Perform AI analysis (with EXIF hint if available) ===
+    const enhancedHints = {
+      ...hints,
+      exifGps: exifHint // Pass EXIF data to Gemini
+    };
+    const result = await analyzeImageLocation(images, enhancedHints);
+
+    // If EXIF had coordinates but AI didn't use them, add them
+    if (exifData?.result.hasGps && exifData.result.gps && !result.coordinates) {
+      result.coordinates = {
+        lat: exifData.result.gps.latitude,
+        lng: exifData.result.gps.longitude
+      };
+      result.reasoning.unshift('Location coordinates extracted from image EXIF metadata.');
+      result.confidenceScore = Math.max(result.confidenceScore, 85);
+    }
 
     // Return result with updated credits
     const updatedUser = await queryOne<DbUser>(
@@ -65,6 +102,7 @@ router.post('/', async (req: AuthRequest, res, next) => {
     res.json({
       success: true,
       result,
+      exifData: exifData?.result || null,
       creditsRemaining: updatedUser?.credits || 0,
       cost: searchCost
     });
