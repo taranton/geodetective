@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { queryOne, execute } from '../db/connection.js';
-import { DbUser, DbSystemSetting } from '../db/models.js';
+import { query, queryOne, execute } from '../db/connection.js';
+import { DbUser, DbSystemSetting, DbUserSetting, PREMIUM_SERVICES } from '../db/models.js';
 import { createError } from '../middleware/errorHandler.js';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
 import { analyzeImageLocation, refineImageLocation } from '../services/geminiService.js';
@@ -10,6 +10,11 @@ import {
   formatGpsForPrompt,
   ExifResult
 } from '../services/exifService.js';
+import {
+  performWebDetection,
+  formatVisionResultForPrompt,
+  CloudVisionResult
+} from '../services/cloudVisionService.js';
 
 const router = Router();
 
@@ -38,11 +43,44 @@ router.post('/', async (req: AuthRequest, res, next) => {
         const { latitude, longitude } = exifData.result.gps;
         if (validateGpsCoordinates(latitude, longitude)) {
           exifHint = formatGpsForPrompt(exifData.result.gps);
-          console.log('EXIF GPS found:', exifHint);
         }
       }
-    } catch (exifError) {
-      console.error('EXIF extraction failed (non-critical):', exifError);
+    } catch {
+      // EXIF extraction is non-critical, continue without it
+    }
+
+    // === STEP 1.5: Check user's premium service settings ===
+    const userSettings = await query<DbUserSetting[]>(
+      'SELECT * FROM user_settings WHERE user_id = ?',
+      [req.userId]
+    );
+    const userSettingsMap: Record<string, string> = {};
+    userSettings.forEach(s => {
+      userSettingsMap[s.setting_key] = s.setting_value;
+    });
+
+    const cloudVisionEnabled = userSettingsMap[PREMIUM_SERVICES.CLOUD_VISION] === 'true';
+
+    // === STEP 1.6: Perform Cloud Vision if enabled ===
+    let cloudVisionResult: CloudVisionResult | null = null;
+    let cloudVisionHint: string | null = null;
+
+    if (cloudVisionEnabled) {
+      console.log('[CloudVision] Cloud Vision enabled, performing web detection...');
+      try {
+        cloudVisionResult = await performWebDetection(images[0].base64);
+        cloudVisionHint = formatVisionResultForPrompt(cloudVisionResult);
+        console.log('[CloudVision] Success! Found:');
+        console.log(`  Best guess: ${cloudVisionResult.bestGuessLabels.join(', ') || '(none)'}`);
+        console.log(`  Location hints: ${cloudVisionResult.locationHints.join(', ') || '(none)'}`);
+        console.log(`  Pages with matches: ${cloudVisionResult.pagesWithMatchingImages.length}`);
+        console.log(`  Web entities: ${cloudVisionResult.webEntities.slice(0, 5).map(e => e.description).join(', ')}`);
+      } catch (err: any) {
+        console.error('Cloud Vision API error:', err.message || err);
+        // Cloud Vision is non-critical, continue without it
+      }
+    } else {
+      console.log('[CloudVision] Cloud Vision not enabled for this user');
     }
 
     // Get search cost
@@ -51,6 +89,18 @@ router.post('/', async (req: AuthRequest, res, next) => {
       ['search_cost']
     );
     const searchCost = costSetting ? parseInt(costSetting.setting_value) : 10;
+
+    // Get Cloud Vision cost if enabled
+    let cloudVisionCost = 0;
+    if (cloudVisionEnabled) {
+      const visionCostSetting = await queryOne<DbSystemSetting>(
+        'SELECT setting_value FROM system_settings WHERE setting_key = ?',
+        ['cloud_vision_cost']
+      );
+      cloudVisionCost = visionCostSetting ? parseInt(visionCostSetting.setting_value) : 5;
+    }
+
+    const totalCost = searchCost + cloudVisionCost;
 
     // Check user credits
     const user = await queryOne<DbUser>(
@@ -62,9 +112,9 @@ router.post('/', async (req: AuthRequest, res, next) => {
       throw createError('User not found', 404, 'USER_NOT_FOUND');
     }
 
-    if (user.credits < searchCost) {
+    if (user.credits < totalCost) {
       throw createError(
-        `Insufficient credits. Need ${searchCost}, have ${user.credits}`,
+        `Insufficient credits. Need ${totalCost}, have ${user.credits}`,
         402,
         'INSUFFICIENT_CREDITS'
       );
@@ -73,13 +123,14 @@ router.post('/', async (req: AuthRequest, res, next) => {
     // Deduct credits
     await execute(
       'UPDATE users SET credits = credits - ? WHERE id = ?',
-      [searchCost, req.userId]
+      [totalCost, req.userId]
     );
 
-    // === STEP 2: Perform AI analysis (with EXIF hint if available) ===
+    // === STEP 2: Perform AI analysis (with EXIF and Cloud Vision hints if available) ===
     const enhancedHints = {
       ...hints,
-      exifGps: exifHint // Pass EXIF data to Gemini
+      exifGps: exifHint, // Pass EXIF data to Gemini
+      reverseImageSearch: cloudVisionHint // Pass Cloud Vision results to Gemini
     };
     const result = await analyzeImageLocation(images, enhancedHints);
 
@@ -103,21 +154,30 @@ router.post('/', async (req: AuthRequest, res, next) => {
       success: true,
       result,
       exifData: exifData?.result || null,
+      cloudVisionData: cloudVisionResult,
       creditsRemaining: updatedUser?.credits || 0,
-      cost: searchCost
+      cost: totalCost
     });
   } catch (error: any) {
     // Refund credits on error (if already deducted)
+    // Note: We try to refund the total cost that was charged
     if (error.code !== 'INSUFFICIENT_CREDITS' && req.userId) {
       try {
-        const costSetting = await queryOne<DbSystemSetting>(
-          'SELECT setting_value FROM system_settings WHERE setting_key = ?',
-          ['search_cost']
-        );
-        const searchCost = costSetting ? parseInt(costSetting.setting_value) : 10;
+        // Get costs to calculate refund amount
+        const [searchCostSetting, visionCostSetting] = await Promise.all([
+          queryOne<DbSystemSetting>('SELECT setting_value FROM system_settings WHERE setting_key = ?', ['search_cost']),
+          queryOne<DbSystemSetting>('SELECT setting_value FROM system_settings WHERE setting_key = ?', ['cloud_vision_cost'])
+        ]);
+        const userSettings = await query<DbUserSetting[]>('SELECT * FROM user_settings WHERE user_id = ?', [req.userId]);
+        const visionEnabled = userSettings.some(s => s.setting_key === PREMIUM_SERVICES.CLOUD_VISION && s.setting_value === 'true');
+
+        const searchCost = searchCostSetting ? parseInt(searchCostSetting.setting_value) : 10;
+        const visionCost = visionEnabled && visionCostSetting ? parseInt(visionCostSetting.setting_value) : 0;
+        const refundAmount = searchCost + visionCost;
+
         await execute(
           'UPDATE users SET credits = credits + ? WHERE id = ?',
-          [searchCost, req.userId]
+          [refundAmount, req.userId]
         );
       } catch (refundError) {
         console.error('Failed to refund credits:', refundError);

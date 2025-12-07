@@ -57,6 +57,20 @@ const LocationInputs: React.FC<LocationInputsProps> = ({ hints, onChange, disabl
             />
         </div>
       </div>
+
+      {/* Additional Info Textarea */}
+      <div className="space-y-1 mt-4">
+        <label htmlFor="additionalInfo" className="text-xs text-slate-500 ml-1">Additional Context (time, date, event, other clues)</label>
+        <textarea
+          id="additionalInfo"
+          value={hints.additionalInfo || ''}
+          onChange={(e) => onChange('additionalInfo', e.target.value)}
+          placeholder="e.g. Photo taken in summer 2023, during a music festival, near a train station..."
+          disabled={disabled}
+          rows={2}
+          className="w-full bg-slate-900/50 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all disabled:opacity-50 resize-none"
+        />
+      </div>
     </div>
   );
 };

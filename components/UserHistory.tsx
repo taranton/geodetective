@@ -1,6 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, lazy, Suspense } from 'react';
 import { apiService } from '../services/apiService';
 import { SearchHistory } from '../types';
+
+// Lazy load map component to avoid SSR issues
+const HistoryMap = lazy(() => import('./HistoryMap'));
+
+type ViewMode = 'list' | 'map';
 
 interface UserHistoryProps {
   userId: string;
@@ -12,6 +17,7 @@ const UserHistory: React.FC<UserHistoryProps> = ({ userId }) => {
   const [error, setError] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<SearchHistory | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
 
   useEffect(() => {
     const loadHistory = async () => {
@@ -55,11 +61,48 @@ const UserHistory: React.FC<UserHistoryProps> = ({ userId }) => {
     );
   }
 
+  const locationsWithCoords = history.filter(
+    item => item.coordinates && item.coordinates.lat && item.coordinates.lng
+  ).length;
+
   return (
     <div className="max-w-4xl mx-auto w-full space-y-6 animate-fade-in">
       <div className="flex items-center justify-between border-b border-slate-800 pb-4">
          <h2 className="text-2xl font-bold text-white">Mission History</h2>
-         <span className="text-sm text-slate-500">{history.length} Records</span>
+         <div className="flex items-center gap-4">
+           <span className="text-sm text-slate-500">{history.length} Records</span>
+           {/* View Toggle */}
+           <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-800">
+             <button
+               onClick={() => setViewMode('list')}
+               className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                 viewMode === 'list'
+                   ? 'bg-emerald-600 text-white'
+                   : 'text-slate-400 hover:text-white'
+               }`}
+             >
+               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+               </svg>
+             </button>
+             <button
+               onClick={() => setViewMode('map')}
+               disabled={locationsWithCoords === 0}
+               className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                 viewMode === 'map'
+                   ? 'bg-emerald-600 text-white'
+                   : locationsWithCoords === 0
+                     ? 'text-slate-600 cursor-not-allowed'
+                     : 'text-slate-400 hover:text-white'
+               }`}
+               title={locationsWithCoords === 0 ? 'No locations with coordinates' : `${locationsWithCoords} locations on map`}
+             >
+               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+               </svg>
+             </button>
+           </div>
+         </div>
       </div>
 
       {error && (
@@ -72,6 +115,14 @@ const UserHistory: React.FC<UserHistoryProps> = ({ userId }) => {
         <div className="text-center py-12 text-slate-500 bg-slate-900/30 rounded-2xl border border-slate-800 border-dashed">
             No analysis history found. Start your first investigation.
         </div>
+      ) : viewMode === 'map' ? (
+        <Suspense fallback={
+          <div className="h-[500px] bg-slate-900 rounded-2xl border border-slate-800 flex items-center justify-center">
+            <div className="text-slate-400">Loading map...</div>
+          </div>
+        }>
+          <HistoryMap history={history} onSelectItem={setSelectedItem} />
+        </Suspense>
       ) : (
         <div className="grid gap-4">
             {history.map(item => (

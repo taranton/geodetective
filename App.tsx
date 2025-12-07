@@ -5,6 +5,7 @@ import LocationInputs from './components/LocationInputs';
 import Auth from './components/Auth';
 import AdminPanel from './components/AdminPanel';
 import UserHistory from './components/UserHistory';
+import UserSettings from './components/UserSettings';
 import { apiService } from './services/apiService';
 import { AnalysisState, LocationHints, User, SystemSettings } from './types';
 
@@ -33,6 +34,7 @@ const App: React.FC = () => {
   const [loadingStageIndex, setLoadingStageIndex] = useState(0);
   const [settings, setSettings] = useState<SystemSettings>({ searchCost: 10 });
   const [isInitializing, setIsInitializing] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
 
   const imageDataRef = useRef<Array<{ base64: string, mimeType: string }>>([]);
 
@@ -76,8 +78,20 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [state.status]);
 
-  const handleImagesSelected = async (images: Array<{ base64: string, mimeType: string, previewUrl: string }>) => {
+  // Store uploaded images without auto-starting analysis
+  const handleImagesSelected = (images: Array<{ base64: string, mimeType: string, previewUrl: string }>) => {
     if (!user) return;
+
+    const previews = images.map(img => img.previewUrl);
+    imageDataRef.current = images.map(img => ({ base64: img.base64, mimeType: img.mimeType }));
+
+    // Set to 'ready' state - show preview but don't analyze yet
+    setState({ status: 'ready', imagePreviews: previews });
+  };
+
+  // Start analysis when user clicks the button
+  const handleStartAnalysis = async () => {
+    if (!user || imageDataRef.current.length === 0) return;
 
     // Check credits on client side first
     if (user.credits < settings.searchCost) {
@@ -85,10 +99,8 @@ const App: React.FC = () => {
       return;
     }
 
-    const previews = images.map(img => img.previewUrl);
+    const previews = state.imagePreviews || [];
     setState({ status: 'analyzing', imagePreviews: previews });
-
-    imageDataRef.current = images.map(img => ({ base64: img.base64, mimeType: img.mimeType }));
 
     try {
       // Call API for analysis (handles credits deduction on server)
@@ -226,7 +238,17 @@ const App: React.FC = () => {
 
              <div className="flex items-center gap-2">
                  <span className="text-sm text-slate-300 hidden md:block">{user.username}</span>
-                 <button onClick={handleLogout} className="text-slate-500 hover:text-red-400">
+                 <button
+                   onClick={() => setShowSettings(true)}
+                   className="text-slate-500 hover:text-emerald-400 transition-colors p-1"
+                   title="Settings"
+                 >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                 </button>
+                 <button onClick={handleLogout} className="text-slate-500 hover:text-red-400 transition-colors p-1" title="Logout">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
                  </button>
              </div>
@@ -265,11 +287,57 @@ const App: React.FC = () => {
                     </div>
 
                     <div className="space-y-6">
+                        <ImageUploader onImagesSelected={handleImagesSelected} />
+                    </div>
+                </div>
+                )}
+
+                {state.status === 'ready' && (
+                <div className="w-full max-w-4xl space-y-6 animate-fade-in">
+                    {/* Image Preview */}
+                    <div className={`relative w-full max-w-3xl mx-auto rounded-2xl overflow-hidden border border-slate-700 bg-black grid ${state.imagePreviews && state.imagePreviews.length > 1 ? 'grid-cols-2 gap-0.5' : 'grid-cols-1'}`}>
+                        {state.imagePreviews && state.imagePreviews.map((preview, idx) => (
+                            <div key={idx} className={`relative overflow-hidden ${state.imagePreviews && state.imagePreviews.length > 2 && idx === 0 ? 'col-span-2 aspect-video' : 'aspect-video'}`}>
+                                <img
+                                    src={preview}
+                                    alt={`Evidence ${idx + 1}`}
+                                    className="w-full h-full object-cover"
+                                />
+                            </div>
+                        ))}
+                        {/* Image count badge */}
+                        <div className="absolute top-3 right-3 bg-black/70 backdrop-blur-sm px-3 py-1 rounded-full text-xs text-white font-mono">
+                            {state.imagePreviews?.length || 0} IMAGE{(state.imagePreviews?.length || 0) !== 1 ? 'S' : ''} LOADED
+                        </div>
+                    </div>
+
+                    {/* Hints Form */}
+                    <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-6">
                         <LocationInputs
                             hints={locationHints}
                             onChange={(key, val) => setLocationHints(prev => ({ ...prev, [key]: val }))}
                         />
-                        <ImageUploader onImagesSelected={handleImagesSelected} />
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex items-center justify-center gap-4">
+                        <button
+                            onClick={() => { setState({ status: 'idle' }); imageDataRef.current = []; }}
+                            className="px-6 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium transition-colors"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={handleStartAnalysis}
+                            disabled={user && user.credits < settings.searchCost}
+                            className="px-8 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-white font-bold text-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg shadow-emerald-500/20"
+                        >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                            </svg>
+                            Start Analysis
+                            <span className="text-xs font-mono opacity-80">(-{settings.searchCost})</span>
+                        </button>
                     </div>
                 </div>
                 )}
@@ -305,6 +373,7 @@ const App: React.FC = () => {
                 {state.status === 'complete' && state.result && (
                 <AnalysisResult
                     result={state.result}
+                    imagePreviews={state.imagePreviews}
                     onReset={() => setState({ status: 'idle' })}
                     onRefine={handleRefine}
                     isRefining={!!state.isRefining}
@@ -334,6 +403,12 @@ const App: React.FC = () => {
        <footer className="w-full border-t border-slate-900 py-6 text-center text-slate-600 text-sm">
         <p>&copy; {new Date().getFullYear()} GeoDetective AI. All rights reserved.</p>
       </footer>
+
+      {/* User Settings Modal */}
+      <UserSettings
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+      />
     </div>
   );
 };

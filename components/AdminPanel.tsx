@@ -2,9 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { apiService } from '../services/apiService';
 import { User, SystemSettings } from '../types';
 
+interface PremiumServiceAdmin {
+  key: string;
+  name: string;
+  cost: number;
+}
+
 const AdminPanel: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [settings, setSettings] = useState<SystemSettings>({ searchCost: 0 });
+  const [premiumServices, setPremiumServices] = useState<PremiumServiceAdmin[]>([]);
   const [editingCredits, setEditingCredits] = useState<string | null>(null);
   const [creditAmount, setCreditAmount] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -24,6 +31,10 @@ const AdminPanel: React.FC = () => {
       ]);
       setUsers(usersData);
       setSettings(settingsData);
+      // Extract premium services from settings
+      if ((settingsData as any).premiumServices) {
+        setPremiumServices((settingsData as any).premiumServices);
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -60,6 +71,24 @@ const AdminPanel: React.FC = () => {
     }
   };
 
+  const handleUpdatePremiumCost = async (serviceKey: string, cost: number) => {
+    try {
+      // Map service key to the appropriate setting
+      const settingMap: Record<string, string> = {
+        'cloud_vision_enabled': 'cloudVisionCost'
+      };
+      const settingKey = settingMap[serviceKey];
+      if (settingKey) {
+        await apiService.updateSystemSettings({ [settingKey]: cost });
+        setPremiumServices(prev =>
+          prev.map(s => s.key === serviceKey ? { ...s, cost } : s)
+        );
+      }
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[40vh]">
@@ -76,15 +105,29 @@ const AdminPanel: React.FC = () => {
             <p className="text-slate-400">Manage user access and system economy.</p>
         </div>
 
-        <div className="flex items-center gap-4 bg-slate-900 p-4 rounded-xl border border-slate-800">
-            <span className="text-sm text-slate-400">Cost per Search:</span>
-            <input
-                type="number"
-                value={settings.searchCost}
-                onChange={(e) => handleUpdateCost(parseInt(e.target.value) || 0)}
-                className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white text-center"
-            />
-            <span className="text-sm text-emerald-500 font-bold">CREDITS</span>
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-3 bg-slate-900 p-3 rounded-xl border border-slate-800">
+              <span className="text-xs text-slate-400">Base Search:</span>
+              <input
+                  type="number"
+                  value={settings.searchCost}
+                  onChange={(e) => handleUpdateCost(parseInt(e.target.value) || 0)}
+                  className="w-16 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white text-center text-sm"
+              />
+              <span className="text-xs text-emerald-500 font-bold">CR</span>
+          </div>
+          {premiumServices.map(service => (
+            <div key={service.key} className="flex items-center gap-3 bg-amber-900/20 p-3 rounded-xl border border-amber-800/50">
+              <span className="text-xs text-amber-400">{service.name}:</span>
+              <input
+                  type="number"
+                  value={service.cost}
+                  onChange={(e) => handleUpdatePremiumCost(service.key, parseInt(e.target.value) || 0)}
+                  className="w-16 bg-slate-950 border border-amber-700/50 rounded px-2 py-1 text-white text-center text-sm"
+              />
+              <span className="text-xs text-amber-500 font-bold">CR</span>
+            </div>
+          ))}
         </div>
       </div>
 

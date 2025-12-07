@@ -190,6 +190,60 @@ export const apiService = {
     await request(`/history/${id}`, { method: 'DELETE' });
   },
 
+  // --- User Settings ---
+  getUserSettings: async (): Promise<{
+    premiumServices: Array<{
+      key: string;
+      name: string;
+      description: string;
+      cost: number;
+      enabled: boolean;
+    }>;
+  }> => {
+    const data = await request<{
+      success: boolean;
+      settings: {
+        premiumServices: Array<{
+          key: string;
+          name: string;
+          description: string;
+          cost: number;
+          enabled: boolean;
+        }>;
+      };
+    }>('/settings/user');
+    return data.settings;
+  },
+
+  updateUserSettings: async (settings: {
+    premiumServices?: Record<string, boolean>;
+  }): Promise<{
+    premiumServices: Array<{
+      key: string;
+      name: string;
+      description: string;
+      cost: number;
+      enabled: boolean;
+    }>;
+  }> => {
+    const data = await request<{
+      success: boolean;
+      settings: {
+        premiumServices: Array<{
+          key: string;
+          name: string;
+          description: string;
+          cost: number;
+          enabled: boolean;
+        }>;
+      };
+    }>('/settings/user', {
+      method: 'PATCH',
+      body: JSON.stringify(settings),
+    });
+    return data.settings;
+  },
+
   // --- Utilities ---
   isAuthenticated: (): boolean => {
     return !!getToken();

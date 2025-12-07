@@ -39,6 +39,34 @@ export interface DbSystemSetting {
   updated_at: Date;
 }
 
+export interface DbUserSetting {
+  user_id: string;
+  setting_key: string;
+  setting_value: string;
+  updated_at: Date;
+}
+
+// Premium service keys
+export const PREMIUM_SERVICES = {
+  CLOUD_VISION: 'cloud_vision_enabled',
+} as const;
+
+export type PremiumServiceKey = typeof PREMIUM_SERVICES[keyof typeof PREMIUM_SERVICES];
+
+// User settings response
+export interface UserSettings {
+  cloudVisionEnabled: boolean;
+}
+
+// Premium service info for frontend
+export interface PremiumServiceInfo {
+  key: string;
+  name: string;
+  description: string;
+  cost: number;
+  enabled: boolean;
+}
+
 // API response types (без sensitive данных)
 
 export interface UserPublic {

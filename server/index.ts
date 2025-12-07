@@ -17,9 +17,6 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.join(__dirname, '.env'), override: true });
 
-// Debug: check if API key loaded
-console.log('GEMINI_API_KEY loaded:', process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.substring(0, 15) + '...' : 'NOT SET!');
-
 const app = express();
 const PORT = process.env.PORT || 3001;
 

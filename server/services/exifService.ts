@@ -26,8 +26,6 @@ export async function extractExifData(base64Data: string, mimeType: string): Pro
     // Convert base64 to Buffer
     const buffer = Buffer.from(base64Data, 'base64');
 
-    console.log(`[EXIF] Processing image: ${mimeType}, size: ${buffer.length} bytes`);
-
     // Parse EXIF data - enable HEIC support
     const exif = await exifr.parse(buffer, {
       gps: true,
@@ -41,7 +39,6 @@ export async function extractExifData(base64Data: string, mimeType: string): Pro
     });
 
     if (!exif) {
-      console.log('[EXIF] No EXIF metadata found');
       return {
         hasGps: false,
         gps: null,
@@ -50,14 +47,10 @@ export async function extractExifData(base64Data: string, mimeType: string): Pro
       };
     }
 
-    console.log('[EXIF] Metadata found:', Object.keys(exif));
-
     // Check for GPS data - HEIC might use different property names
     const lat = exif.latitude ?? exif.GPSLatitude;
     const lng = exif.longitude ?? exif.GPSLongitude;
     const hasGps = lat !== undefined && lng !== undefined;
-
-    console.log(`[EXIF] GPS check: lat=${lat}, lng=${lng}, hasGps=${hasGps}`);
 
     if (hasGps) {
       return {
