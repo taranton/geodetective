@@ -22,6 +22,7 @@ export interface LocationHints {
   additionalInfo?: string; // User-provided context (time, date, other clues)
   exifGps?: string; // GPS coordinates extracted from EXIF metadata
   reverseImageSearch?: string; // Results from Cloud Vision reverse image search
+  confirmedLocations?: string[]; // High-confidence locations from SerpAPI (to be used in search queries)
 }
 
 export interface EvidenceItem {
@@ -941,8 +942,17 @@ const runFinalSearch = async (
 
   // Build hints section
   let hintsSection = '';
+
+  // CRITICAL: Add confirmed locations from SerpAPI - these are HIGHEST PRIORITY
+  if (hints?.confirmedLocations && hints.confirmedLocations.length > 0) {
+    hintsSection += `\n\n## ⚠️ CONFIRMED LOCATIONS FROM REVERSE IMAGE SEARCH (HIGHEST PRIORITY!):\n`;
+    hintsSection += `The following locations were found in ${hints.confirmedLocations.length}+ online matches for THIS EXACT IMAGE:\n`;
+    hintsSection += hints.confirmedLocations.slice(0, 5).map(loc => `- **${loc}**`).join('\n');
+    hintsSection += `\n\n**CRITICAL**: These locations are from actual reverse image search matches. Your search MUST focus on these locations first. Include "${hints.confirmedLocations[0]}" in your search queries!\n`;
+  }
+
   if (hints?.continent || hints?.country || hints?.city || hints?.additionalInfo) {
-    hintsSection = '\n\n## USER-PROVIDED HINTS (use to focus your search):\n';
+    hintsSection += '\n\n## USER-PROVIDED HINTS (use to focus your search):\n';
     if (hints.continent) hintsSection += `- Continent: ${hints.continent}\n`;
     if (hints.country) hintsSection += `- Country: ${hints.country}\n`;
     if (hints.city) hintsSection += `- City/Region: ${hints.city}\n`;
@@ -1557,6 +1567,24 @@ export const analyzeImageLocation = async (
   // ============ PHASE 2: AGGREGATE CLUES ============
   console.log('[GeoAnalysis] Phase 2: Aggregating clues from all experts...');
   const aggregatedClues = aggregateClues(clueExperts);
+
+  // IMPORTANT: If we have confirmed locations from SerpAPI, prepend them to search queries
+  if (hints?.confirmedLocations && hints.confirmedLocations.length > 0) {
+    const primaryLocation = hints.confirmedLocations[0]; // e.g., "szczecin"
+    console.log(`[GeoAnalysis] Injecting confirmed location "${primaryLocation}" into search queries`);
+
+    // Modify existing queries to include the confirmed location
+    aggregatedClues.suggestedSearchQueries = aggregatedClues.suggestedSearchQueries.map(query => {
+      // Don't add if already contains the location
+      if (query.toLowerCase().includes(primaryLocation.toLowerCase())) {
+        return query;
+      }
+      return `${query} ${primaryLocation}`;
+    });
+
+    // Also add a direct search for the location
+    aggregatedClues.suggestedSearchQueries.unshift(`landmark building ${primaryLocation}`);
+  }
 
   console.log(`[GeoAnalysis] Total: ${aggregatedClues.searchableClues.length} searchable clues`);
   console.log(`[GeoAnalysis] Text found: ${aggregatedClues.allText.slice(0, 5).join(', ')}`);

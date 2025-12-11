@@ -192,11 +192,22 @@ router.post('/', async (req: AuthRequest, res, next) => {
     // Prefer SerpAPI (Google Lens) over Cloud Vision as it provides actual reverse image search
     const reverseSearchHint = serpApiHint || cloudVisionHint;
 
+    // Extract confirmed locations from SerpAPI (high-confidence location hints)
+    const confirmedLocations = serpApiResult?.locationHints?.filter(
+      loc => loc.length > 2 && /^[A-Z]/.test(loc) // Only proper nouns (capitalized)
+    ) || [];
+
     const enhancedHints = {
       ...hints,
       exifGps: exifHint, // Pass EXIF data to Gemini
-      reverseImageSearch: reverseSearchHint // Pass reverse image search results to Gemini
+      reverseImageSearch: reverseSearchHint, // Pass reverse image search results to Gemini
+      confirmedLocations: confirmedLocations.length > 0 ? confirmedLocations : undefined
     };
+
+    if (confirmedLocations.length > 0) {
+      console.log(`[Analyze] Confirmed locations from SerpAPI: ${confirmedLocations.join(', ')}`);
+    }
+
     const result = await analyzeImageLocation(images, enhancedHints);
 
     // If EXIF had coordinates but AI didn't use them, add them
