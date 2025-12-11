@@ -245,9 +245,15 @@ export async function performGoogleLensSearch(
 export function formatSerpApiResultForPrompt(result: SerpApiResult): string {
   const parts: string[] = [];
 
+  // Add strong priority indicator
+  const matchCount = result.visualMatches.length;
+  if (matchCount > 10) {
+    parts.push(`**IMPORTANT: This exact image was found ${matchCount} times online. The locations mentioned in these matches are HIGHLY RELIABLE.**`);
+  }
+
   // Knowledge graph is the most reliable
   if (result.knowledgeGraph?.title) {
-    parts.push(`**Identified Subject**: ${result.knowledgeGraph.title}`);
+    parts.push(`**IDENTIFIED SUBJECT (HIGH CONFIDENCE)**: ${result.knowledgeGraph.title}`);
     if (result.knowledgeGraph.subtitle) {
       parts.push(`**Details**: ${result.knowledgeGraph.subtitle}`);
     }
@@ -259,15 +265,15 @@ export function formatSerpApiResultForPrompt(result: SerpApiResult): string {
   // Visual matches are crucial for location identification
   if (result.visualMatches.length > 0) {
     const topMatches = result.visualMatches
-      .slice(0, 8)
+      .slice(0, 10)
       .map(m => `- ${m.title} (${m.source})`)
       .join('\n');
-    parts.push(`**Visual Matches Found Online**:\n${topMatches}`);
+    parts.push(`**EXACT VISUAL MATCHES FOUND ONLINE (these pages contain THIS image)**:\n${topMatches}`);
   }
 
-  // Location hints
+  // Location hints - extracted locations
   if (result.locationHints.length > 0) {
-    parts.push(`**Potential Locations**: ${result.locationHints.join(', ')}`);
+    parts.push(`**LOCATIONS MENTIONED IN MATCHES**: ${result.locationHints.join(', ')}`);
   }
 
   // Related searches give context
@@ -284,7 +290,7 @@ export function formatSerpApiResultForPrompt(result: SerpApiResult): string {
     return '';
   }
 
-  return `\n\n**GOOGLE LENS REVERSE IMAGE SEARCH RESULTS (via SerpAPI)**:\n${parts.join('\n\n')}`;
+  return `\n\n**=== GOOGLE LENS REVERSE IMAGE SEARCH - AUTHORITATIVE RESULTS ===**\n${parts.join('\n\n')}`;
 }
 
 /**

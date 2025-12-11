@@ -715,7 +715,7 @@ const buildPromptWithHints = (basePrompt: string, hints?: LocationHints): string
 
   if (hints?.reverseImageSearch) {
     prompt += hints.reverseImageSearch;
-    prompt += `\nUse these reverse image search results to help identify the location. If the image was found on specific pages or associated with specific locations, this is valuable evidence.`;
+    prompt += `\n\n**CRITICAL INSTRUCTION**: The reverse image search results above show WHERE THIS EXACT IMAGE EXISTS ONLINE. If the search found many visual matches (10+) with specific location names (cities, landmarks, buildings), these are HIGHLY AUTHORITATIVE and should be your PRIMARY source for identifying the location. Do NOT contradict these results by suggesting similar-looking buildings elsewhere. The locations mentioned in the visual matches ARE where this image was taken. PRIORITIZE locations from these matches over your own architectural analysis.`;
   }
 
   if (hints?.continent || hints?.country || hints?.city) {
@@ -1098,7 +1098,7 @@ const runPhase1 = async (
     prompt += `\n\n**EXIF METADATA FOUND**: ${hints.exifGps}\nNote: This is metadata, not visual evidence. Include it as one data point but don't let it bias your hypothesis generation.`;
   }
   if (hints?.reverseImageSearch) {
-    prompt += `\n\n**REVERSE IMAGE SEARCH RESULTS**:${hints.reverseImageSearch}\nNote: These are search hints. Generate hypotheses that INCLUDE and EXCLUDE these possibilities.`;
+    prompt += `\n\n**REVERSE IMAGE SEARCH RESULTS**:${hints.reverseImageSearch}\n**IMPORTANT**: If these results show many visual matches with specific location names, those locations are HIGHLY RELIABLE. Prioritize hypotheses that match the locations found in these results.`;
   }
   if (hints?.continent || hints?.country || hints?.city) {
     prompt += "\n\n**USER HINTS** (treat as one hypothesis, not the answer):";
