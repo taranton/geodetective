@@ -135,7 +135,10 @@ Find ALL text, signs, and written elements that could help identify the EXACT lo
     {"clue": "Phone +33 4 91 XX XX XX", "type": "phone", "searchQuery": null}
   ],
   "languageClues": ["French text", "PHARMACIE sign"],
-  "transcribedText": ["PHARMACIE", "Le Petit", "Rue de la..."]
+  "transcribedText": ["PHARMACIE", "Le Petit", "Rue de la..."],
+  "suggestedRegions": [
+    {"region": "France", "confidence": 85, "reasoning": "French language text, French phone format +33"}
+  ]
 }`;
 
 const CLUE_EXPERT_BUILT = `You are an OSINT analyst specializing in architecture, infrastructure, and man-made environment analysis.
@@ -166,7 +169,10 @@ Find architectural and infrastructure elements that help narrow down the SPECIFI
     {"clue": "Metro station entrance 'M' logo", "type": "transport", "searchQuery": null}
   ],
   "infrastructureClues": ["White road markings", "Concrete utility poles", "Right-hand traffic"],
-  "architectureStyle": "Mediterranean modernist, 1970s apartment blocks"
+  "architectureStyle": "Mediterranean modernist, 1970s apartment blocks",
+  "suggestedRegions": [
+    {"region": "Western Europe", "confidence": 70, "reasoning": "White road markings, right-hand traffic, European architecture"}
+  ]
 }`;
 
 const CLUE_EXPERT_NATURAL = `You are an OSINT analyst specializing in natural environment, geography, and climate indicators.
@@ -189,7 +195,10 @@ Analyze natural elements to help narrow down the location. Focus on DISTINCTIVE 
     {"clue": "Mediterranean coastline with rocky coves", "type": "geography", "searchQuery": null}
   ],
   "vegetationClues": ["Mediterranean pine trees", "Palm trees (Phoenix species)", "Dry summer grass"],
-  "climateIndicators": ["Strong sunlight", "Low humidity", "Summer season"]
+  "climateIndicators": ["Strong sunlight", "Low humidity", "Summer season"],
+  "suggestedRegions": [
+    {"region": "Mediterranean", "confidence": 75, "reasoning": "Mediterranean vegetation, dry climate, coastal geography"}
+  ]
 }`;
 
 const CLUE_EXPERTS = [
@@ -206,6 +215,13 @@ interface SearchableClue {
   searchQuery: string | null;  // What to search for (null if not searchable)
 }
 
+interface RegionGuess {
+  region: string;
+  confidence: number;  // 0-100
+  reasoning: string;
+  expertSource?: string;  // Which expert suggested this
+}
+
 interface ClueExpertOutput {
   expertType: string;
   searchableClues: SearchableClue[];
@@ -215,6 +231,7 @@ interface ClueExpertOutput {
   architectureStyle?: string;  // For built expert
   vegetationClues?: string[];  // For natural expert
   climateIndicators?: string[];  // For natural expert
+  suggestedRegions?: RegionGuess[];  // Region guesses from expert
 }
 
 interface AggregatedClues {
@@ -223,6 +240,7 @@ interface AggregatedClues {
   allInfrastructure: string[];  // Infrastructure observations
   allNature: string[];  // Nature/vegetation observations
   suggestedSearchQueries: string[];  // Pre-built search queries
+  regionGuesses: RegionGuess[];  // Aggregated region guesses from all experts
 }
 
 // ============ FINAL SEARCH PROMPT ============
@@ -753,6 +771,14 @@ const runClueExpert = async (
 
     const parsed = parseResponse(response.text);
 
+    // Parse and tag region guesses with expert source
+    const suggestedRegions: RegionGuess[] = (parsed.suggestedRegions || []).map((r: any) => ({
+      region: r.region || 'Unknown',
+      confidence: r.confidence || 50,
+      reasoning: r.reasoning || '',
+      expertSource: expertName
+    }));
+
     return {
       expertType: expertName,
       searchableClues: parsed.searchableClues || [],
@@ -761,7 +787,8 @@ const runClueExpert = async (
       infrastructureClues: parsed.infrastructureClues || [],
       architectureStyle: parsed.architectureStyle || '',
       vegetationClues: parsed.vegetationClues || [],
-      climateIndicators: parsed.climateIndicators || []
+      climateIndicators: parsed.climateIndicators || [],
+      suggestedRegions
     };
   } catch (err: any) {
     console.log(`[ClueExpert:${expertName}] Error: ${err.message}`);
@@ -795,6 +822,7 @@ const aggregateClues = (expertResults: ClueExpertOutput[]): AggregatedClues => {
   const allInfra: string[] = [];
   const allNature: string[] = [];
   const queries: string[] = [];
+  const allRegions: RegionGuess[] = [];
 
   for (const expert of expertResults) {
     // Collect searchable clues
@@ -828,20 +856,59 @@ const aggregateClues = (expertResults: ClueExpertOutput[]): AggregatedClues => {
     if (expert.climateIndicators) {
       allNature.push(...expert.climateIndicators);
     }
+
+    // Collect region guesses
+    if (expert.suggestedRegions) {
+      allRegions.push(...expert.suggestedRegions);
+    }
   }
 
   // Remove duplicates and empty strings
   const uniqueQueries = [...new Set(queries.filter(q => q))];
 
+  // Aggregate region guesses - combine by region name, average confidence
+  const regionMap = new Map<string, { totalConf: number; count: number; reasons: string[]; sources: string[] }>();
+  for (const r of allRegions) {
+    const key = r.region.toLowerCase();
+    const existing = regionMap.get(key);
+    if (existing) {
+      existing.totalConf += r.confidence;
+      existing.count += 1;
+      existing.reasons.push(r.reasoning);
+      if (r.expertSource) existing.sources.push(r.expertSource);
+    } else {
+      regionMap.set(key, {
+        totalConf: r.confidence,
+        count: 1,
+        reasons: [r.reasoning],
+        sources: r.expertSource ? [r.expertSource] : []
+      });
+    }
+  }
+
+  // Convert to sorted array
+  const aggregatedRegions: RegionGuess[] = Array.from(regionMap.entries())
+    .map(([region, data]) => ({
+      region: region.charAt(0).toUpperCase() + region.slice(1),  // Capitalize
+      confidence: Math.round(data.totalConf / data.count),
+      reasoning: data.reasons.join('; '),
+      expertSource: data.sources.join(', ')
+    }))
+    .sort((a, b) => b.confidence - a.confidence);
+
   console.log(`[ClueAggregator] Collected ${allSearchable.length} searchable clues`);
   console.log(`[ClueAggregator] Suggested queries: ${uniqueQueries.slice(0, 5).join(', ')}`);
+  if (aggregatedRegions.length > 0) {
+    console.log(`[ClueAggregator] Region guesses: ${aggregatedRegions.slice(0, 3).map(r => `${r.region}(${r.confidence}%)`).join(', ')}`);
+  }
 
   return {
     searchableClues: allSearchable,
     allText: [...new Set(allText.filter(t => t))],
     allInfrastructure: [...new Set(allInfra.filter(i => i))],
     allNature: [...new Set(allNature.filter(n => n))],
-    suggestedSearchQueries: uniqueQueries
+    suggestedSearchQueries: uniqueQueries,
+    regionGuesses: aggregatedRegions
   };
 };
 
@@ -1502,6 +1569,7 @@ export const analyzeImageLocation = async (
     const result = await runFinalSearch(imageParts, aggregatedClues, hints);
 
     console.log(`[GeoAnalysis] Final result: ${result.locationName}`);
+    console.log(`[GeoAnalysis] Coordinates: ${result.coordinates ? `${result.coordinates.lat}, ${result.coordinates.lng}` : 'null'}`);
     console.log(`[GeoAnalysis] Confidence: ${result.confidenceScore}% (region: ${result.confidence?.region}%, local: ${result.confidence?.local}%)`);
 
     // Always mark as definitive - we focus on ONE location
@@ -1521,26 +1589,50 @@ export const analyzeImageLocation = async (
   } catch (searchError: any) {
     console.log(`[GeoAnalysis] Final search failed: ${searchError.message}`);
 
-    // Fallback: return basic result from clues without search
+    // Use region guesses if available
+    const topRegion = aggregatedClues.regionGuesses[0];
+    const alternativeRegions = aggregatedClues.regionGuesses.slice(1, 4).map(r => `${r.region} (${r.confidence}%)`);
+
+    // Build location name from region guess
+    let locationName = 'Location could not be determined';
+    let regionConfidence = 20;
+    let reasoning: string[] = ['Analysis based on visual clues only (search failed)'];
+
+    if (topRegion) {
+      locationName = `Likely region: ${topRegion.region}`;
+      regionConfidence = Math.min(topRegion.confidence, 60);  // Cap at 60% for unverified region guess
+      reasoning = [
+        `⚠️ Could not determine specific location. Best region estimate: ${topRegion.region}`,
+        `Region confidence: ${topRegion.confidence}% (based on ${topRegion.expertSource || 'expert analysis'})`,
+        `Reasoning: ${topRegion.reasoning}`,
+        `Found ${aggregatedClues.searchableClues.length} clues but could not verify specific location via search`
+      ];
+    } else {
+      reasoning.push(`Found ${aggregatedClues.searchableClues.length} clues but could not determine region`);
+    }
+
+    // Add suggested queries
+    reasoning.push(...aggregatedClues.suggestedSearchQueries.slice(0, 3).map(q => `Suggested search: "${q}"`));
+
+    // Fallback: return result with region guess
     const fallbackResult: GeoAnalysisResult = {
-      locationName: 'Location could not be determined',
+      locationName,
       coordinates: null,
-      confidenceScore: 20,
-      confidence: { region: 20, local: 5 },
+      confidenceScore: regionConfidence,
+      confidence: { region: regionConfidence, local: 5 },
       isDefinitive: true,
       candidates: undefined,
-      reasoning: [
-        'Analysis based on visual clues only (search failed)',
-        `Found ${aggregatedClues.searchableClues.length} clues but could not verify via search`,
-        ...aggregatedClues.suggestedSearchQueries.slice(0, 3).map(q => `Suggested search: "${q}"`)
-      ],
+      reasoning,
       evidence: aggregatedClues.searchableClues.map(c => ({
         clue: c.clue,
         strength: c.type === 'business_name' || c.type === 'street_name' ? 'hard' as const : 'medium' as const,
-        supports: 'Unknown - search failed'
+        supports: topRegion ? topRegion.region : 'Unknown'
       })),
-      alternativeLocations: [],
-      uncertainties: ['Could not perform web search to verify location'],
+      alternativeLocations: alternativeRegions,
+      uncertainties: [
+        'Could not perform web search to verify specific location',
+        ...(topRegion ? [`Region based on: ${topRegion.reasoning}`] : [])
+      ],
       visualCues: {
         signs: aggregatedClues.allText.join('; '),
         architecture: aggregatedClues.allInfrastructure.join('; '),
@@ -1552,6 +1644,9 @@ export const analyzeImageLocation = async (
     };
 
     console.log(`[GeoAnalysis] Returning fallback with ${aggregatedClues.searchableClues.length} clues`);
+    if (topRegion) {
+      console.log(`[GeoAnalysis] Best region guess: ${topRegion.region} (${topRegion.confidence}%)`);
+    }
     return fallbackResult;
   }
 };

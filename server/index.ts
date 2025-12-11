@@ -8,6 +8,7 @@ import usersRoutes from './routes/users.js';
 import historyRoutes from './routes/history.js';
 import settingsRoutes from './routes/settings.js';
 import analyzeRoutes from './routes/analyze.js';
+import tempImagesRoutes from './routes/tempImages.js';
 
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -37,6 +38,7 @@ app.use('/api/users', usersRoutes);
 app.use('/api/history', historyRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/analyze', analyzeRoutes);
+app.use('/api/temp-images', tempImagesRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

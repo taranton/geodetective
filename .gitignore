@@ -16,6 +16,8 @@ dist-ssr
 server/node_modules
 server/dist
 server/.env
+server/temp-images/*
+!server/temp-images/.gitkeep
 
 # Environment files with secrets
 .env

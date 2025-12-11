@@ -49,6 +49,7 @@ export interface DbUserSetting {
 // Premium service keys
 export const PREMIUM_SERVICES = {
   CLOUD_VISION: 'cloud_vision_enabled',
+  SERP_API: 'serp_api_enabled',
 } as const;
 
 export type PremiumServiceKey = typeof PREMIUM_SERVICES[keyof typeof PREMIUM_SERVICES];
@@ -56,6 +57,7 @@ export type PremiumServiceKey = typeof PREMIUM_SERVICES[keyof typeof PREMIUM_SER
 // User settings response
 export interface UserSettings {
   cloudVisionEnabled: boolean;
+  serpApiEnabled: boolean;
 }
 
 // Premium service info for frontend

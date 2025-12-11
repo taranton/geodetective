@@ -11,9 +11,16 @@ const PREMIUM_SERVICE_DEFS = [
   {
     key: PREMIUM_SERVICES.CLOUD_VISION,
     name: 'Google Cloud Vision',
-    description: 'Reverse image search to find where this photo has been published online',
+    description: 'Basic image analysis and web entity detection',
     costKey: 'cloud_vision_cost',
     defaultCost: 5
+  },
+  {
+    key: PREMIUM_SERVICES.SERP_API,
+    name: 'Google Lens (SerpAPI)',
+    description: 'Real reverse image search using Google Lens - finds exact matches online',
+    costKey: 'serp_api_cost',
+    defaultCost: 10
   }
 ];
 
@@ -65,12 +72,13 @@ const upsertSetting = async (key: string, value: number) => {
 // PATCH /api/settings - Update system settings (admin only)
 router.patch('/', authenticate, requireAdmin, async (req: AuthRequest, res, next) => {
   try {
-    const { searchCost, defaultCredits, cloudVisionCost } = req.body;
+    const { searchCost, defaultCredits, cloudVisionCost, serpApiCost } = req.body;
 
     await Promise.all([
       upsertSetting('search_cost', searchCost),
       upsertSetting('default_credits', defaultCredits),
       upsertSetting('cloud_vision_cost', cloudVisionCost),
+      upsertSetting('serp_api_cost', serpApiCost),
     ]);
 
     const settings = await fetchSystemSettings();

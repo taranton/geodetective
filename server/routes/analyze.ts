@@ -15,6 +15,14 @@ import {
   formatVisionResultForPrompt,
   CloudVisionResult
 } from '../services/cloudVisionService.js';
+import {
+  saveTempImage,
+  deleteTempImage,
+  getTempImageUrl,
+  performGoogleLensSearch,
+  formatSerpApiResultForPrompt,
+  SerpApiResult
+} from '../services/serpApiService.js';
 
 const router = Router();
 
@@ -60,6 +68,7 @@ router.post('/', async (req: AuthRequest, res, next) => {
     });
 
     const cloudVisionEnabled = userSettingsMap[PREMIUM_SERVICES.CLOUD_VISION] === 'true';
+    const serpApiEnabled = userSettingsMap[PREMIUM_SERVICES.SERP_API] === 'true';
 
     // === STEP 1.6: Perform Cloud Vision if enabled ===
     let cloudVisionResult: CloudVisionResult | null = null;
@@ -83,6 +92,49 @@ router.post('/', async (req: AuthRequest, res, next) => {
       console.log('[CloudVision] Cloud Vision not enabled for this user');
     }
 
+    // === STEP 1.7: Perform SerpAPI Google Lens if enabled ===
+    let serpApiResult: SerpApiResult | null = null;
+    let serpApiHint: string | null = null;
+    let tempImageFilename: string | null = null;
+
+    if (serpApiEnabled) {
+      console.log('[SerpAPI] Google Lens enabled, performing reverse image search...');
+      try {
+        // Save image temporarily
+        tempImageFilename = saveTempImage(images[0].base64);
+
+        // Get server base URL (from env or construct from request)
+        const serverBaseUrl = process.env.SERVER_PUBLIC_URL || `http://${req.headers.host}`;
+        const imageUrl = getTempImageUrl(tempImageFilename, serverBaseUrl);
+
+        console.log('[SerpAPI] Temp image URL:', imageUrl);
+
+        // Perform Google Lens search
+        serpApiResult = await performGoogleLensSearch(imageUrl);
+        serpApiHint = formatSerpApiResultForPrompt(serpApiResult);
+
+        console.log('[SerpAPI] Success! Found:');
+        console.log(`  Visual matches: ${serpApiResult.visualMatches.length}`);
+        console.log(`  Knowledge graph: ${serpApiResult.knowledgeGraph?.title || '(none)'}`);
+        console.log(`  Location hints: ${serpApiResult.locationHints.slice(0, 5).join(', ') || '(none)'}`);
+
+        // Clean up temp image
+        if (tempImageFilename) {
+          deleteTempImage(tempImageFilename);
+          tempImageFilename = null;
+        }
+      } catch (err: any) {
+        console.error('[SerpAPI] Error:', err.message || err);
+        // Clean up on error
+        if (tempImageFilename) {
+          deleteTempImage(tempImageFilename);
+        }
+        // SerpAPI is non-critical, continue without it
+      }
+    } else {
+      console.log('[SerpAPI] Google Lens not enabled for this user');
+    }
+
     // Get search cost
     const costSetting = await queryOne<DbSystemSetting>(
       'SELECT setting_value FROM system_settings WHERE setting_key = ?',
@@ -100,7 +152,17 @@ router.post('/', async (req: AuthRequest, res, next) => {
       cloudVisionCost = visionCostSetting ? parseInt(visionCostSetting.setting_value) : 5;
     }
 
-    const totalCost = searchCost + cloudVisionCost;
+    // Get SerpAPI cost if enabled
+    let serpApiCost = 0;
+    if (serpApiEnabled) {
+      const serpApiCostSetting = await queryOne<DbSystemSetting>(
+        'SELECT setting_value FROM system_settings WHERE setting_key = ?',
+        ['serp_api_cost']
+      );
+      serpApiCost = serpApiCostSetting ? parseInt(serpApiCostSetting.setting_value) : 10;
+    }
+
+    const totalCost = searchCost + cloudVisionCost + serpApiCost;
 
     // Check user credits
     const user = await queryOne<DbUser>(
@@ -126,11 +188,14 @@ router.post('/', async (req: AuthRequest, res, next) => {
       [totalCost, req.userId]
     );
 
-    // === STEP 2: Perform AI analysis (with EXIF and Cloud Vision hints if available) ===
+    // === STEP 2: Perform AI analysis (with EXIF and reverse image search hints if available) ===
+    // Prefer SerpAPI (Google Lens) over Cloud Vision as it provides actual reverse image search
+    const reverseSearchHint = serpApiHint || cloudVisionHint;
+
     const enhancedHints = {
       ...hints,
       exifGps: exifHint, // Pass EXIF data to Gemini
-      reverseImageSearch: cloudVisionHint // Pass Cloud Vision results to Gemini
+      reverseImageSearch: reverseSearchHint // Pass reverse image search results to Gemini
     };
     const result = await analyzeImageLocation(images, enhancedHints);
 
@@ -155,6 +220,7 @@ router.post('/', async (req: AuthRequest, res, next) => {
       result,
       exifData: exifData?.result || null,
       cloudVisionData: cloudVisionResult,
+      serpApiData: serpApiResult,
       creditsRemaining: updatedUser?.credits || 0,
       cost: totalCost
     });
@@ -164,16 +230,19 @@ router.post('/', async (req: AuthRequest, res, next) => {
     if (error.code !== 'INSUFFICIENT_CREDITS' && req.userId) {
       try {
         // Get costs to calculate refund amount
-        const [searchCostSetting, visionCostSetting] = await Promise.all([
+        const [searchCostSetting, visionCostSetting, serpApiCostSetting] = await Promise.all([
           queryOne<DbSystemSetting>('SELECT setting_value FROM system_settings WHERE setting_key = ?', ['search_cost']),
-          queryOne<DbSystemSetting>('SELECT setting_value FROM system_settings WHERE setting_key = ?', ['cloud_vision_cost'])
+          queryOne<DbSystemSetting>('SELECT setting_value FROM system_settings WHERE setting_key = ?', ['cloud_vision_cost']),
+          queryOne<DbSystemSetting>('SELECT setting_value FROM system_settings WHERE setting_key = ?', ['serp_api_cost'])
         ]);
         const userSettings = await query<DbUserSetting[]>('SELECT * FROM user_settings WHERE user_id = ?', [req.userId]);
         const visionEnabled = userSettings.some(s => s.setting_key === PREMIUM_SERVICES.CLOUD_VISION && s.setting_value === 'true');
+        const serpEnabled = userSettings.some(s => s.setting_key === PREMIUM_SERVICES.SERP_API && s.setting_value === 'true');
 
         const searchCost = searchCostSetting ? parseInt(searchCostSetting.setting_value) : 10;
         const visionCost = visionEnabled && visionCostSetting ? parseInt(visionCostSetting.setting_value) : 0;
-        const refundAmount = searchCost + visionCost;
+        const serpCost = serpEnabled && serpApiCostSetting ? parseInt(serpApiCostSetting.setting_value) : 0;
+        const refundAmount = searchCost + visionCost + serpCost;
 
         await execute(
           'UPDATE users SET credits = credits + ? WHERE id = ?',
