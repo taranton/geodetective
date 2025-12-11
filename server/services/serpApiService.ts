@@ -86,65 +86,84 @@ export function getTempImageUrl(filename: string, serverBaseUrl: string): string
   return `${serverBaseUrl}/api/temp-images/${filename}`;
 }
 
+// List of known countries (for pattern matching)
+const KNOWN_COUNTRIES = new Set([
+  'poland', 'germany', 'france', 'italy', 'spain', 'russia', 'ukraine', 'uk', 'england',
+  'usa', 'canada', 'china', 'japan', 'india', 'brazil', 'australia', 'mexico', 'netherlands',
+  'belgium', 'austria', 'switzerland', 'sweden', 'norway', 'denmark', 'finland', 'czech',
+  'czechia', 'slovakia', 'hungary', 'romania', 'bulgaria', 'greece', 'turkey', 'portugal',
+  'ireland', 'scotland', 'wales', 'croatia', 'serbia', 'slovenia', 'estonia', 'latvia',
+  'lithuania', 'belarus', 'moldova', 'georgia', 'armenia', 'azerbaijan', 'kazakhstan',
+  'argentina', 'chile', 'colombia', 'peru', 'venezuela', 'egypt', 'morocco', 'south africa',
+  'kenya', 'nigeria', 'thailand', 'vietnam', 'indonesia', 'malaysia', 'singapore', 'philippines',
+  'south korea', 'korea', 'taiwan', 'hong kong', 'israel', 'iran', 'iraq', 'saudi arabia',
+  'uae', 'emirates', 'qatar', 'pakistan', 'bangladesh', 'sri lanka', 'new zealand'
+]);
+
+// Common non-location words to filter out
+const NOISE_WORDS = new Set([
+  'the', 'a', 'an', 'of', 'in', 'at', 'on', 'for', 'to', 'with', 'by', 'from', 'and', 'or',
+  'stock', 'photo', 'image', 'picture', 'alamy', 'getty', 'shutterstock', 'dreamstime',
+  'free', 'high', 'low', 'resolution', 'quality', 'hd', 'download', 'royalty', 'editorial',
+  'vector', 'illustration', 'background', 'wallpaper', 'beautiful', 'amazing', 'stunning',
+  'view', 'scene', 'night', 'day', 'summer', 'winter', 'spring', 'autumn', 'fall',
+  'old', 'new', 'ancient', 'modern', 'historic', 'historical', 'famous', 'popular',
+  'red', 'blue', 'green', 'white', 'black', 'yellow', 'orange', 'pink', 'purple',
+  'very', 'best', 'top', 'great', 'nice', 'good', 'big', 'small', 'large', 'little'
+]);
+
 /**
- * Extract location hints from visual matches
+ * Extract location hints from visual matches - improved version
  */
 function extractLocationHints(matches: SerpApiVisualMatch[]): string[] {
-  const locationKeywords = [
-    'city', 'town', 'village', 'country', 'state', 'province', 'region',
-    'street', 'avenue', 'road', 'boulevard', 'square', 'plaza',
-    'monument', 'landmark', 'building', 'tower', 'bridge', 'station',
-    'park', 'beach', 'mountain', 'river', 'lake', 'church', 'cathedral',
-    'museum', 'palace', 'castle', 'temple', 'mosque', 'hotel'
-  ];
-
   const hints: string[] = [];
   const seen = new Set<string>();
 
   for (const match of matches) {
-    const text = `${match.title} ${match.source}`.toLowerCase();
+    const title = match.title;
 
-    // Check for location-like patterns
-    // Capital city names, place names with location keywords
-    const titleWords = match.title.split(/[\s,\-–|]+/);
+    // Pattern 1: "X, Country" or "X Country" (e.g., "Szczecin, Poland", "Szczecin Poland")
+    for (const country of KNOWN_COUNTRIES) {
+      const countryPatterns = [
+        new RegExp(`([A-Z][a-zA-Zа-яёА-ЯЁ\\s-]+),?\\s+${country}`, 'i'),
+        new RegExp(`${country},?\\s+([A-Z][a-zA-Zа-яёА-ЯЁ\\s-]+)`, 'i'),
+      ];
 
-    for (const word of titleWords) {
-      // Skip short words and common non-place words
-      if (word.length < 3) continue;
-
-      const lowerWord = word.toLowerCase();
-
-      // Add words that might be place names
-      if (/^[A-Z][a-zа-яё]+/.test(word) && !seen.has(lowerWord)) {
-        // Check if followed/preceded by location keywords
-        if (locationKeywords.some(kw => text.includes(kw))) {
-          seen.add(lowerWord);
-          hints.push(word);
+      for (const pattern of countryPatterns) {
+        const m = title.match(pattern);
+        if (m && m[1]) {
+          const city = m[1].trim().replace(/[,\s]+$/, '');
+          const cityLower = city.toLowerCase();
+          if (city.length > 2 && !NOISE_WORDS.has(cityLower) && !seen.has(cityLower)) {
+            seen.add(cityLower);
+            hints.push(city);
+          }
         }
+      }
+
+      // Also add the country if mentioned
+      if (title.toLowerCase().includes(country) && !seen.has(country)) {
+        seen.add(country);
+        hints.push(country.charAt(0).toUpperCase() + country.slice(1));
       }
     }
 
-    // Extract full location phrases (e.g., "in Paris", "Moscow, Russia")
-    const locationPatterns = [
-      /(?:in|at|near)\s+([A-Z][a-zа-яё]+(?:\s+[A-Z][a-zа-яё]+)*)/gi,
-      /([A-Z][a-zа-яё]+),\s*([A-Z][a-zа-яё]+)/g,  // City, Country
-    ];
-
-    for (const pattern of locationPatterns) {
-      let m;
-      while ((m = pattern.exec(match.title)) !== null) {
-        const location = m[1] || m[0];
-        const lowerLoc = location.toLowerCase();
-        if (!seen.has(lowerLoc)) {
-          seen.add(lowerLoc);
-          hints.push(location);
-        }
+    // Pattern 2: "in [City]" or "at [City]"
+    const inAtPattern = /(?:in|at|near)\s+([A-Z][a-zA-Zа-яёА-ЯЁ]+(?:\s+[A-Z][a-zA-Zа-яёА-ЯЁ]+)?)/gi;
+    let m;
+    while ((m = inAtPattern.exec(title)) !== null) {
+      const loc = m[1].trim();
+      const locLower = loc.toLowerCase();
+      if (loc.length > 2 && !NOISE_WORDS.has(locLower) && !seen.has(locLower)) {
+        seen.add(locLower);
+        hints.push(loc);
       }
     }
   }
 
-  return hints.slice(0, 15);
+  return hints.slice(0, 10);
 }
+
 
 /**
  * Perform reverse image search using SerpAPI Google Lens
